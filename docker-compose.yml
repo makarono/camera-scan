@@ -1,0 +1,11 @@
+services:
+  scanner:
+    build: .
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./results:/app/results
+      # SD kartica - prilagodi putanju prema svom sistemu
+      # macOS: /Volumes/NAZIV_KARTICE
+      # Linux: /media/$USER/NAZIV_KARTICE ili /mnt/sdcard
+      - /Volumes/NO NAME:/sdcard:ro
