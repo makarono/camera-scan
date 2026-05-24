@@ -18,8 +18,11 @@ Skripta automatski skenira SD kartice iz nadzornih kamera i detektira snimke na 
 ### Lokalno
 
 ```bash
-# Puni scan (YOLOv8s + YOLO-World) - default
+# World-only scan (samo YOLO-World) - default
 just
+
+# Puni scan (YOLOv8s + YOLO-World)
+just scan
 
 # Brzi scan (samo YOLOv8s)
 just fast
@@ -38,6 +41,9 @@ Pri prvom pokretanju automatski se kreira virtualno okruženje i instaliraju ovi
 ```bash
 # Build Docker image
 just docker-build
+
+# World-only scan u Dockeru (default)
+just docker-world
 
 # Puni scan u Dockeru
 just docker-scan
@@ -114,6 +120,7 @@ docker compose run --rm -v "/Volumes/NOVA KARTICA:/sdcard:ro" scanner
 
 | Mod | Lokalno | Docker | Modeli | Detekcija |
 |-----|---------|--------|--------|-----------|
+| World | `just` / `just world` | `just docker-world` | Samo YOLO-World | Traktor, pickup, divljač |
 | Puni | `just scan` | `just docker-scan` | YOLOv8s + YOLO-World | Traktor, pickup, divljač |
 | Brzi | `just fast` | `just docker-fast` | Samo YOLOv8s | Standardne klase |
 
@@ -121,17 +128,17 @@ docker compose run --rm -v "/Volumes/NOVA KARTICA:/sdcard:ro" scanner
 
 1. Automatski detektira SD karticu (traži DCIM folder)
 2. Pita za naziv kamere (npr. front, stala, kapija)
-3. **Prolaz 1 (YOLOv8s):** skenira sve slike i videe za standardne objekte
-4. **Prolaz 2 (YOLO-World):** skenira samo preskočene fajlove za dodatne klase (traktor, pickup, divljač)
+3. **Prolaz 1 (YOLOv8s):** skenira sve slike i videe za standardne objekte *(preskače se u world modu)*
+4. **Prolaz 2 (YOLO-World):** skenira preskočene fajlove (ili sve u world modu) za dodatne klase (traktor, pickup, divljač)
 5. Generira izvještaj i VLC playlistu
 6. Otvara VLC sa pozitivnim snimkama (lokalni mod)
 7. Pita za sljedeću karticu
 
 ### Detektirani objekti
 
-**Prolaz 1 (YOLOv8s):** osoba, auto, kamion, motocikl, bicikl, autobus, pas, mačka, konj, krava, ovca, medvjed
+**Prolaz 1 (YOLOv8s):** osoba, auto, kamion, motocikl, bicikl, autobus, pas
 
-**Prolaz 2 (YOLO-World):** traktor, pickup, jelen, divlja svinja, lisica + sve iz prolaza 1
+**Prolaz 2 (YOLO-World):** traktor, jelen, lisica, vatra, dim + sve iz prolaza 1
 
 ### Optimizacije brzine
 

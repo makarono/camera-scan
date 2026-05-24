@@ -14,19 +14,17 @@ import cv2
 WANTED_CLASSES = {
     0: "person",
     1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck",
-    15: "cat", 16: "dog", 17: "horse", 18: "sheep",
-    19: "cow", 20: "elephant", 21: "bear", 22: "zebra", 23: "giraffe",
+    16: "dog",
 }
 
 # Pass 2: YOLO-World custom classes
 WORLD_CLASSES = [
-    "person", "car", "truck", "pickup truck", "tractor",
-    "motorcycle", "bicycle", "bus",
-    "dog", "cat", "horse", "cow", "sheep", "bear",
-    "deer", "wild boar", "fox",
+    "person", "car", "truck", "tractor", "motorcycle", "bicycle", "bus",
+    "dog", "deer", "fox",
+    "fire", "smoke",
 ]
 
-CONFIDENCE_THRESHOLD = 0.35
+CONFIDENCE_THRESHOLD = 0.45
 WORLD_CONFIDENCE = 0.25  # lower threshold for second pass
 VIDEO_SAMPLE_INTERVAL = 30
 # Default to 'results' folder in the same directory as the script
@@ -120,7 +118,7 @@ def get_paired_file(file_path):
     return paired if paired.exists() else None
 
 
-def scan_card(yolo_model, world_model, src, out_dir, fast=False, no_vlc=False):
+def scan_card(yolo_model, world_model, src, out_dir, fast=False, world_only=False, no_vlc=False):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     files = sorted(f for f in src.glob("*") if not f.name.startswith("."))
@@ -132,9 +130,9 @@ def scan_card(yolo_model, world_model, src, out_dir, fast=False, no_vlc=False):
     results_log = {} # filename -> detection_string
     total = len(images) + len(videos)
 
-    passes = [
-        ("YOLOv8s", yolo_model, WANTED_CLASSES, CONFIDENCE_THRESHOLD),
-    ]
+    passes = []
+    if not world_only:
+        passes.append(("YOLOv8s", yolo_model, WANTED_CLASSES, CONFIDENCE_THRESHOLD))
     if not fast:
         passes.append(("YOLO-World", world_model, WORLD_CLASSES, WORLD_CONFIDENCE))
 
@@ -198,7 +196,7 @@ def scan_card(yolo_model, world_model, src, out_dir, fast=False, no_vlc=False):
         f.write(f"Detected files: {len(results_log)}\n")
         f.write(f"Source: {src}\n")
         f.write(f"Scanned: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        f.write(f"Models: {'YOLOv8s only' if fast else 'YOLOv8s + YOLO-World'}\n\n")
+        f.write(f"Models: {'YOLO-World only' if world_only else ('YOLOv8s only' if fast else 'YOLOv8s + YOLO-World')}\n\n")
         for name, det in sorted(results_log.items()):
             f.write(f"{name}  ->  {det}\n")
 
@@ -225,15 +223,20 @@ def scan_card(yolo_model, world_model, src, out_dir, fast=False, no_vlc=False):
 def main():
     parser = argparse.ArgumentParser(description="Camera SD card scanner")
     parser.add_argument("--fast", action="store_true", help="Fast scan: YOLOv8s only, skip YOLO-World")
+    parser.add_argument("--world-only", action="store_true", help="World-only scan: YOLO-World only, skip YOLOv8s")
     parser.add_argument("--no-vlc", action="store_true", help="Skip opening VLC (for Docker)")
     args = parser.parse_args()
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    mode = "FAST (YOLOv8s only)" if args.fast else "FULL (YOLOv8s + YOLO-World)"
+    if args.fast and args.world_only:
+        print("Error: --fast and --world-only are mutually exclusive")
+        return
+
+    mode = "WORLD ONLY (YOLO-World)" if args.world_only else ("FAST (YOLOv8s only)" if args.fast else "FULL (YOLOv8s + YOLO-World)")
     print(f"Mode: {mode}\nLoading models...")
 
-    yolo_model = YOLO("yolov8s.pt")
+    yolo_model = None if args.world_only else YOLO("yolov8s.pt")
     world_model = None
     if not args.fast:
         world_model = YOLO("yolov8s-worldv2.pt")
@@ -266,7 +269,7 @@ def main():
         out_dir = RESULTS_DIR / camera_name / datetime.now().strftime("%Y-%m-%d_%H-%M")
 
         print(f"\nScanning: {src}\nResults:  {out_dir}\n")
-        scan_card(yolo_model, world_model, src, out_dir, fast=args.fast, no_vlc=args.no_vlc)
+        scan_card(yolo_model, world_model, src, out_dir, fast=args.fast, world_only=args.world_only, no_vlc=args.no_vlc)
 
         if input("\nScan another card? (y/n): ").strip().lower() != "y":
             break

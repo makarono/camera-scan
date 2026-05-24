@@ -1,6 +1,6 @@
 # Camera SD card scanner
 
-default: scan
+default: world
 
 setup:
     #!/usr/bin/env bash
@@ -8,6 +8,10 @@ setup:
         uv venv .venv
         uv pip install -r requirements.txt
     fi
+
+# World-only scan: YOLO-World only (default)
+world: setup
+    .venv/bin/python filter_camera.py --world-only
 
 # Full scan: YOLOv8s + YOLO-World (slower, catches tractors/pickups)
 scan: setup
@@ -24,6 +28,10 @@ clean:
 # Build Docker image
 docker-build:
     docker compose build
+
+# World-only scan in Docker (default)
+docker-world:
+    docker compose run --rm scanner --world-only
 
 # Full scan in Docker
 docker-scan:
