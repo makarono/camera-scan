@@ -18,17 +18,17 @@ This is a classic camera-trap empty-frame problem.
 ## Goal
 
 Replace the YOLOv8s + YOLO-World two-pass system with a single **MegaDetector v6**
-model (`MDV6-yolov10-e`), a model purpose-built to filter empty camera-trap frames.
+model (`MDV6-yolov10-c`), a model purpose-built to filter empty camera-trap frames.
 Keep only **person** and **vehicle** detections (ignore `animal` — wildlife is not wanted).
 
 ## Model
 
-- Weights: `MDV6-yolov10-e-1280.pt`
-  from `https://zenodo.org/records/15398270/files/MDV6-yolov10-e-1280.pt?download=1`
+- Weights: `MDV6-yolov10-c.pt`
+  from `https://zenodo.org/records/15398270/files/MDV6-yolov10-c.pt?download=1`
 - Loadable directly via ultralytics `YOLO()` (confirmed: pytorch-wildlife loads it through
   `ultralytics.models`).
 - Class map: `{0: animal, 1: person, 2: vehicle}`. Wanted: `{1: person, 2: vehicle}`.
-- Inference image size: **1280** (this is the 1280px variant; required for correct results).
+- Inference image size: **1280** (`IMGSZ` constant).
 - Device: MPS on the Apple M2 (already auto-detected).
 
 ## Changes to `filter_camera.py`
@@ -48,8 +48,8 @@ Add:
 
 Keep (already implemented in this branch):
 - `find_sd_card`, file pairing, report (`detected.txt`) + playlist (`detected.m3u`), VLC open.
-- `process_video`: frame seeking, batched GPU inference (`BATCH_SIZE`), temporal
-  consistency (`MIN_VIDEO_FRAMES = 2`).
+- `process_video`: `grab()`-based frame skipping, batched GPU inference (`BATCH_SIZE`),
+  temporal consistency (`MIN_VIDEO_FRAMES = 2`).
 - `extract_detections`: minimum bounding-box size filter (`MIN_BOX_AREA_RATIO`).
 - `CONFIDENCE_THRESHOLD = 0.25` (MegaDetector recommended range 0.2–0.3).
 
@@ -67,8 +67,8 @@ Keep (already implemented in this branch):
 
 SD card → list images + videos → for each file:
 - image → one inference (`imgsz=1280`)
-- video → seek every 30th frame → batch on GPU → count person/vehicle across sampled
-  frames → require ≥2 frames + min box size
+- video → skip to every 30th frame via `grab()` → batch on GPU → count person/vehicle
+  across sampled frames → require ≥2 frames + min box size
 
 → if person/vehicle found, log + mark paired file → write report + m3u → open VLC.
 
@@ -83,10 +83,14 @@ SD card → list images + videos → for each file:
 
 - If the `.pt` fails to load directly in ultralytics, fall back to the `pytorch-wildlife`
   package (the spike resolves this before further work).
-- `imgsz=1280` is slower than 640; acceptable on M2, exposed as `IMGSZ` constant for tuning.
+- Inference cost is tunable via the `IMGSZ` constant if needed.
 
 ## Decisions
 
-- Variant: `MDV6-yolov10-e` (most accurate), accepting the 1280px speed cost.
+- Variant: `MDV6-yolov10-c` (compact). The larger `MDV6-yolov10-e-1280` was tried first but
+  was too slow on the M2 for large AVI files; the compact model gives a large speedup
+  (~6s/video) at a small accuracy cost.
+- Video frame sampling uses sequential `cv2.grab()` skipping rather than random
+  `CAP_PROP_POS_FRAMES` seeking, which is expensive on compressed AVI.
 - Drop `--fast` / `--world-only` rather than keeping them as no-ops (single model makes
   them meaningless).

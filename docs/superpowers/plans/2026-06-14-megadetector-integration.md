@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the YOLOv8s + YOLO-World two-pass detector in `filter_camera.py` with a single MegaDetector v6 (`MDV6-yolov10-e`) pass that keeps only person + vehicle, killing wind/vegetation false positives.
+**Goal:** Replace the YOLOv8s + YOLO-World two-pass detector in `filter_camera.py` with a single MegaDetector v6 (`MDV6-yolov10-c`) pass that keeps only person + vehicle, killing wind/vegetation false positives.
 
 **Architecture:** One ultralytics-loaded model. Weights auto-downloaded from Zenodo and cached next to the script. Existing scaffolding (SD discovery, pairing, batched/temporal video sampling, min-box filter, report/playlist, VLC) is kept; the two-pass loop, COCO/World class maps, and `--fast`/`--world-only` flags are removed.
 
@@ -35,9 +35,9 @@ import urllib.request
 from pathlib import Path
 from ultralytics import YOLO
 import torch
-w = Path('MDV6-yolov10-e-1280.pt')
+w = Path('MDV6-yolov10-c.pt')
 if not w.exists():
-    urllib.request.urlretrieve('https://zenodo.org/records/15398270/files/MDV6-yolov10-e-1280.pt?download=1', w)
+    urllib.request.urlretrieve('https://zenodo.org/records/15398270/files/MDV6-yolov10-c.pt?download=1', w)
 m = YOLO(str(w))
 print('names:', m.names)
 dev = 'mps' if torch.backends.mps.is_available() else 'cpu'
@@ -50,7 +50,7 @@ Expected: `names: {0: 'animal', 1: 'person', 2: 'vehicle'}` and `inference OK on
 
 - [ ] **Step 2: Decide fallback**
 
-If load fails, stop and switch to the `pytorch-wildlife` package (`pip install PytorchWildlife`, use `MegaDetectorV6(version='MDV6-yolov10-e')`). Otherwise continue — the direct path works.
+If load fails, stop and switch to the `pytorch-wildlife` package (`pip install PytorchWildlife`, use `MegaDetectorV6(version='MDV6-yolov10-c')`). Otherwise continue — the direct path works.
 
 ---
 
@@ -65,7 +65,7 @@ Replace lines 1-14 with:
 ```python
 #!/usr/bin/env python3
 """Filter trail/surveillance camera files - keep only those with people or vehicles.
-Single-pass detection with MegaDetector v6 (MDV6-yolov10-e), a camera-trap model."""
+Single-pass detection with MegaDetector v6 (MDV6-yolov10-c), a camera-trap model."""
 
 import argparse
 import subprocess
@@ -84,14 +84,14 @@ DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.i
 
 Replace the old `WANTED_CLASSES` / `WORLD_CLASSES` / thresholds block (lines 16-35) with:
 ```python
-MODEL_URL = "https://zenodo.org/records/15398270/files/MDV6-yolov10-e-1280.pt?download=1"
-MODEL_WEIGHTS = Path(__file__).parent / "MDV6-yolov10-e-1280.pt"
+MODEL_URL = "https://zenodo.org/records/15398270/files/MDV6-yolov10-c.pt?download=1"
+MODEL_WEIGHTS = Path(__file__).parent / "MDV6-yolov10-c.pt"
 
 # MegaDetector v6 classes are {0: animal, 1: person, 2: vehicle}; keep only person + vehicle.
 WANTED_CLASSES = {1: "person", 2: "vehicle"}
 
 CONFIDENCE_THRESHOLD = 0.25  # MegaDetector recommended range 0.2-0.3
-IMGSZ = 1280  # MDV6-yolov10-e is the 1280px variant
+IMGSZ = 1280  # MegaDetector v6 inference resolution
 VIDEO_SAMPLE_INTERVAL = 30
 BATCH_SIZE = 16  # frames per GPU inference batch
 MIN_VIDEO_FRAMES = 2  # object must appear in this many sampled frames (kills wind/branch false positives)
@@ -206,7 +206,7 @@ In the report-writing block, change:
 ```
 to:
 ```python
-        f.write("Models: MegaDetector v6 (MDV6-yolov10-e)\n\n")
+        f.write("Models: MegaDetector v6 (MDV6-yolov10-c)\n\n")
 ```
 
 - [ ] **Step 3: Verify compile**
@@ -347,7 +347,7 @@ RUN .venv/bin/python -c "from ultralytics import YOLO; YOLO('yolov8s.pt'); YOLO(
 with:
 ```dockerfile
 # pre-download MegaDetector v6 weights
-RUN .venv/bin/python -c "import urllib.request; urllib.request.urlretrieve('https://zenodo.org/records/15398270/files/MDV6-yolov10-e-1280.pt?download=1', 'MDV6-yolov10-e-1280.pt')"
+RUN .venv/bin/python -c "import urllib.request; urllib.request.urlretrieve('https://zenodo.org/records/15398270/files/MDV6-yolov10-c.pt?download=1', 'MDV6-yolov10-c.pt')"
 ```
 
 - [ ] **Step 3: Rewrite `requirements.txt`**
