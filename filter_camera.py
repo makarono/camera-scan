@@ -1,34 +1,41 @@
 #!/usr/bin/env python3
-"""Filter surveillance camera files - keep only those with people, animals, or vehicles.
-Two-pass detection: YOLOv8s first, then YOLO-World on skipped files for tractor/pickup."""
+"""Filter trail/surveillance camera files - keep only those with people or vehicles.
+Single-pass detection with MegaDetector v6 (MDV6-yolov10-e), a camera-trap model."""
 
 import argparse
 import subprocess
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from ultralytics import YOLO
+import torch
 import cv2
 
-# Pass 1: YOLOv8s COCO classes
-WANTED_CLASSES = {
-    0: "person",
-    1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck",
-    16: "dog",
-}
+DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
 
-# Pass 2: YOLO-World custom classes
-WORLD_CLASSES = [
-    "person", "car", "truck", "tractor", "motorcycle", "bicycle", "bus",
-    "dog", "deer", "fox",
-    "fire", "smoke",
-]
+MODEL_URL = "https://zenodo.org/records/15398270/files/MDV6-yolov10-e-1280.pt?download=1"
+MODEL_WEIGHTS = Path(__file__).parent / "MDV6-yolov10-e-1280.pt"
 
-CONFIDENCE_THRESHOLD = 0.45
-WORLD_CONFIDENCE = 0.25  # lower threshold for second pass
+# MegaDetector v6 classes are {0: animal, 1: person, 2: vehicle}; keep only person + vehicle.
+WANTED_CLASSES = {1: "person", 2: "vehicle"}
+
+CONFIDENCE_THRESHOLD = 0.25  # MegaDetector recommended range 0.2-0.3
+IMGSZ = 1280  # MDV6-yolov10-e is the 1280px variant
 VIDEO_SAMPLE_INTERVAL = 30
+BATCH_SIZE = 16  # frames per GPU inference batch
+MIN_VIDEO_FRAMES = 2  # object must appear in this many sampled frames (kills wind/branch false positives)
+MIN_BOX_AREA_RATIO = 0.004  # ignore tiny detections (foliage/shadow noise), fraction of frame area
 # Default to 'results' folder in the same directory as the script
 RESULTS_DIR = Path(__file__).parent / "results"
+
+
+def load_model():
+    """Download MegaDetector v6 weights if missing, then load via ultralytics."""
+    if not MODEL_WEIGHTS.exists():
+        print(f"Downloading MegaDetector weights -> {MODEL_WEIGHTS.name} ...")
+        urllib.request.urlretrieve(MODEL_URL, MODEL_WEIGHTS)
+    return YOLO(str(MODEL_WEIGHTS))
 
 
 def find_sd_card():
@@ -59,9 +66,10 @@ def find_sd_card():
     return candidates
 
 
-def check_media(model, path_or_frame, classes, conf):
-    """Run detection on an image path or a video frame."""
-    results = model(path_or_frame, verbose=False, conf=conf)[0]
+def extract_detections(results, classes):
+    """Turn one Results object into a list of 'label(conf%)' strings, filtering tiny boxes."""
+    h, w = results.orig_shape
+    frame_area = float(h * w)
     found = []
     for box in results.boxes:
         cls_id = int(box.cls[0])
@@ -74,29 +82,55 @@ def check_media(model, path_or_frame, classes, conf):
         else:
             label = classes[cls_id] if cls_id < len(classes) else "unknown"
 
+        x1, y1, x2, y2 = box.xyxy[0]
+        box_area = float((x2 - x1) * (y2 - y1))
+        if frame_area and box_area / frame_area < MIN_BOX_AREA_RATIO:
+            continue
+
         found.append(f"{label}({conf_val:.0%})")
     return list(dict.fromkeys(found))  # remove duplicates
 
 
+def check_media(model, path_or_frame, classes, conf):
+    """Run detection on an image path or a video frame."""
+    results = model(path_or_frame, verbose=False, conf=conf, device=DEVICE, imgsz=IMGSZ)[0]
+    return extract_detections(results, classes)
+
+
 def process_video(model, path, classes, conf):
-    """Sample frames from video and run detection."""
+    """Sample frames from video and run batched detection. Early-exits per batch."""
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         return []
 
-    found = []
-    frame_idx = 0
-    while True:
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames = []
+    idx = 0
+    while total <= 0 or idx < total:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ret, frame = cap.read()
         if not ret:
             break
-        if frame_idx % VIDEO_SAMPLE_INTERVAL == 0:
-            found = check_media(model, frame, classes, conf)
-            if found:
-                break
-        frame_idx += 1
+        frames.append(frame)
+        idx += VIDEO_SAMPLE_INTERVAL
     cap.release()
-    return found
+    if not frames:
+        return []
+
+    label_frames = {}  # base label -> number of sampled frames it appeared in
+    best_str = {}      # base label -> display string (last seen)
+    for start in range(0, len(frames), BATCH_SIZE):
+        batch = frames[start:start + BATCH_SIZE]
+        for results in model(batch, verbose=False, conf=conf, device=DEVICE, imgsz=IMGSZ):
+            for d in extract_detections(results, classes):
+                base = d.split("(")[0]
+                label_frames[base] = label_frames.get(base, 0) + 1
+                best_str[base] = d
+        confirmed = [b for b, n in label_frames.items() if n >= MIN_VIDEO_FRAMES]
+        if confirmed:
+            return [best_str[b] for b in confirmed]
+
+    return []
 
 
 def get_paired_file(file_path):
@@ -118,7 +152,7 @@ def get_paired_file(file_path):
     return paired if paired.exists() else None
 
 
-def scan_card(yolo_model, world_model, src, out_dir, fast=False, world_only=False, no_vlc=False):
+def scan_card(model, src, out_dir, no_vlc=False):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     files = sorted(f for f in src.glob("*") if not f.name.startswith("."))
@@ -127,51 +161,36 @@ def scan_card(yolo_model, world_model, src, out_dir, fast=False, world_only=Fals
 
     print(f"Found {len(images)} images, {len(videos)} videos\n")
 
-    results_log = {} # filename -> detection_string
-    total = len(images) + len(videos)
+    results_log = {}  # filename -> detection_string
+    all_files = images + videos
 
-    passes = []
-    if not world_only:
-        passes.append(("YOLOv8s", yolo_model, WANTED_CLASSES, CONFIDENCE_THRESHOLD))
-    if not fast:
-        passes.append(("YOLO-World", world_model, WORLD_CLASSES, WORLD_CONFIDENCE))
+    for i, f in enumerate(all_files, 1):
+        print(f"[{i}/{len(all_files)}] {f.name} ... ", end="", flush=True)
+        is_video = f.suffix.upper() in (".AVI", ".MP4", ".MOV", ".MKV")
 
-    for pass_name, model, classes, conf in passes:
-        print(f"--- Pass: {pass_name} ---")
-
-        # Filter files that haven't been detected yet
-        to_process = [f for f in images + videos if f.name not in results_log]
-        if not to_process:
-            continue
-
-        for i, f in enumerate(to_process, 1):
-            print(f"[{i}/{len(to_process)}] {f.name} ... ", end="", flush=True)
-
-            # Check paired image first if this is a video
-            if f.suffix.upper() in (".AVI", ".MP4", ".MOV", ".MKV"):
-                paired_img = get_paired_file(f)
-                if paired_img and paired_img.name in results_log:
-                    det_str = results_log[paired_img.name]
-                    print(f"YES -> {det_str} (from paired image)")
-                    results_log[f.name] = det_str
-                    continue
-
-            detected = process_video(model, f, classes, conf) if f.suffix.upper() in (".AVI", ".MP4", ".MOV", ".MKV") \
-                       else check_media(model, f, classes, conf)
-
-            if detected:
-                det_str = ", ".join(detected)
-                print(f"YES -> {det_str}")
+        # Reuse a paired image's result for its video
+        if is_video:
+            paired_img = get_paired_file(f)
+            if paired_img and paired_img.name in results_log:
+                det_str = results_log[paired_img.name]
+                print(f"YES -> {det_str} (from paired image)")
                 results_log[f.name] = det_str
+                continue
 
-                # If it's an image, also mark the paired video
-                if f.suffix.upper() == ".JPG":
-                    paired_vid = get_paired_file(f)
-                    if paired_vid:
-                        results_log[paired_vid.name] = det_str
-            else:
-                print("skip")
-        print()
+        detected = process_video(model, f, WANTED_CLASSES, CONFIDENCE_THRESHOLD) if is_video \
+                   else check_media(model, f, WANTED_CLASSES, CONFIDENCE_THRESHOLD)
+
+        if detected:
+            det_str = ", ".join(detected)
+            print(f"YES -> {det_str}")
+            results_log[f.name] = det_str
+            if not is_video:
+                paired_vid = get_paired_file(f)
+                if paired_vid:
+                    results_log[paired_vid.name] = det_str
+        else:
+            print("skip")
+    print()
 
     # Prepare playlist
     playlist_files = []
@@ -196,7 +215,7 @@ def scan_card(yolo_model, world_model, src, out_dir, fast=False, world_only=Fals
         f.write(f"Detected files: {len(results_log)}\n")
         f.write(f"Source: {src}\n")
         f.write(f"Scanned: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        f.write(f"Models: {'YOLO-World only' if world_only else ('YOLOv8s only' if fast else 'YOLOv8s + YOLO-World')}\n\n")
+        f.write("Models: MegaDetector v6 (MDV6-yolov10-e)\n\n")
         for name, det in sorted(results_log.items()):
             f.write(f"{name}  ->  {det}\n")
 
@@ -222,30 +241,18 @@ def scan_card(yolo_model, world_model, src, out_dir, fast=False, world_only=Fals
 
 def main():
     parser = argparse.ArgumentParser(description="Camera SD card scanner")
-    parser.add_argument("--fast", action="store_true", help="Fast scan: YOLOv8s only, skip YOLO-World")
-    parser.add_argument("--world-only", action="store_true", help="World-only scan: YOLO-World only, skip YOLOv8s")
     parser.add_argument("--no-vlc", action="store_true", help="Skip opening VLC (for Docker)")
     args = parser.parse_args()
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    if args.fast and args.world_only:
-        print("Error: --fast and --world-only are mutually exclusive")
-        return
-
-    mode = "WORLD ONLY (YOLO-World)" if args.world_only else ("FAST (YOLOv8s only)" if args.fast else "FULL (YOLOv8s + YOLO-World)")
-    print(f"Mode: {mode}\nLoading models...")
-
-    yolo_model = None if args.world_only else YOLO("yolov8s.pt")
-    world_model = None
-    if not args.fast:
-        world_model = YOLO("yolov8s-worldv2.pt")
-        world_model.set_classes(WORLD_CLASSES)
-    print("Models ready\n")
+    print("Loading MegaDetector v6...")
+    model = load_model()
+    print("Model ready\n")
 
     while True:
         print("\n" + "=" * 60)
-        print(f"CAMERA SD CARD SCANNER [{mode}]")
+        print("CAMERA SD CARD SCANNER [MegaDetector v6]")
         print("=" * 60)
 
         candidates = find_sd_card()
@@ -269,7 +276,7 @@ def main():
         out_dir = RESULTS_DIR / camera_name / datetime.now().strftime("%Y-%m-%d_%H-%M")
 
         print(f"\nScanning: {src}\nResults:  {out_dir}\n")
-        scan_card(yolo_model, world_model, src, out_dir, fast=args.fast, world_only=args.world_only, no_vlc=args.no_vlc)
+        scan_card(model, src, out_dir, no_vlc=args.no_vlc)
 
         if input("\nScan another card? (y/n): ").strip().lower() != "y":
             break
