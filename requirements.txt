@@ -1,4 +1,2 @@
 ultralytics
 opencv-python
-git+https://github.com/ultralytics/CLIP.git
-ftfy
