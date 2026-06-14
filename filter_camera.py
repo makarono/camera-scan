@@ -227,7 +227,9 @@ def scan_card(model, src, out_dir, no_vlc=False):
             f.write(f"#EXTINF:-1,{entry.name}\n")
             f.write(f"{entry}\n")
 
-    print(f"Done! {len(results_log)} detections -> {report}")
+    det_images = sum(1 for n in results_log if Path(n).suffix.upper() in (".JPG", ".JPEG", ".PNG"))
+    det_videos = len(results_log) - det_images
+    print(f"\nDone! Detected {det_images} images + {det_videos} videos = {len(results_log)} total -> {report}")
     print(f"Playlist: {playlist} ({len(playlist_files)} files)")
 
     if playlist_files and not no_vlc:
