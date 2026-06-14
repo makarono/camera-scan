@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Filter trail/surveillance camera files - keep only those with people or vehicles.
-Single-pass detection with MegaDetector v6 (MDV6-yolov10-e), a camera-trap model."""
+Single-pass detection with MegaDetector v6 (MDV6-yolov10-c), a camera-trap model."""
 
 import argparse
 import subprocess
@@ -14,14 +14,14 @@ import cv2
 
 DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
 
-MODEL_URL = "https://zenodo.org/records/15398270/files/MDV6-yolov10-e-1280.pt?download=1"
-MODEL_WEIGHTS = Path(__file__).parent / "MDV6-yolov10-e-1280.pt"
+MODEL_URL = "https://zenodo.org/records/15398270/files/MDV6-yolov10-c.pt?download=1"
+MODEL_WEIGHTS = Path(__file__).parent / "MDV6-yolov10-c.pt"
 
 # MegaDetector v6 classes are {0: animal, 1: person, 2: vehicle}; keep only person + vehicle.
 WANTED_CLASSES = {1: "person", 2: "vehicle"}
 
 CONFIDENCE_THRESHOLD = 0.25  # MegaDetector recommended range 0.2-0.3
-IMGSZ = 1280  # MDV6-yolov10-e is the 1280px variant
+IMGSZ = 1280  # MegaDetector v6 inference resolution
 VIDEO_SAMPLE_INTERVAL = 30
 BATCH_SIZE = 16  # frames per GPU inference batch
 MIN_VIDEO_FRAMES = 2  # object must appear in this many sampled frames (kills wind/branch false positives)
@@ -103,16 +103,16 @@ def process_video(model, path, classes, conf):
     if not cap.isOpened():
         return []
 
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # Advance with grab() (cheap, no color convert) and only decode every Nth frame.
     frames = []
     idx = 0
-    while total <= 0 or idx < total:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frames.append(frame)
-        idx += VIDEO_SAMPLE_INTERVAL
+    while cap.grab():
+        if idx % VIDEO_SAMPLE_INTERVAL == 0:
+            ok, frame = cap.retrieve()
+            if not ok:
+                break
+            frames.append(frame)
+        idx += 1
     cap.release()
     if not frames:
         return []
@@ -215,7 +215,7 @@ def scan_card(model, src, out_dir, no_vlc=False):
         f.write(f"Detected files: {len(results_log)}\n")
         f.write(f"Source: {src}\n")
         f.write(f"Scanned: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        f.write("Models: MegaDetector v6 (MDV6-yolov10-e)\n\n")
+        f.write("Models: MegaDetector v6 (MDV6-yolov10-c)\n\n")
         for name, det in sorted(results_log.items()):
             f.write(f"{name}  ->  {det}\n")
 

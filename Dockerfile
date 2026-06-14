@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN uv venv .venv && uv pip install -r requirements.txt
 
 # pre-download MegaDetector v6 weights
-RUN .venv/bin/python -c "import urllib.request; urllib.request.urlretrieve('https://zenodo.org/records/15398270/files/MDV6-yolov10-e-1280.pt?download=1', 'MDV6-yolov10-e-1280.pt')"
+RUN .venv/bin/python -c "import urllib.request; urllib.request.urlretrieve('https://zenodo.org/records/15398270/files/MDV6-yolov10-c.pt?download=1', 'MDV6-yolov10-c.pt')"
 
 COPY filter_camera.py .
 
