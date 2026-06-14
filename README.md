@@ -1,6 +1,6 @@
 # Skener SD kartica nadzornih kamera
 
-Skripta automatski skenira SD kartice iz nadzornih kamera i detektira snimke na kojima se nalaze ljudi, životinje ili vozila. Koristi AI detekciju objekata kako bi filtrirala lažne okidače (kiša, vjetar, drveće).
+Skripta automatski skenira SD kartice iz nadzornih kamera i detektira snimke na kojima se nalaze ljudi ili vozila. Koristi MegaDetector v6 (`MDV6-yolov10-c`), AI model za nadzorne/lovne kamere, kako bi filtrirala lažne okidače (kiša, vjetar, drveće).
 
 ## Zahtjevi
 
@@ -18,14 +18,11 @@ Skripta automatski skenira SD kartice iz nadzornih kamera i detektira snimke na 
 ### Lokalno
 
 ```bash
-# World-only scan (samo YOLO-World) - default
+# Scan SD kartice (MegaDetector v6) - default
 just
 
-# Puni scan (YOLOv8s + YOLO-World)
+# Isto kao gore
 just scan
-
-# Brzi scan (samo YOLOv8s)
-just fast
 
 # Samo instalacija virtualnog okruženja
 just setup
@@ -34,7 +31,7 @@ just setup
 just clean
 ```
 
-Pri prvom pokretanju automatski se kreira virtualno okruženje i instaliraju ovisnosti.
+Pri prvom pokretanju automatski se kreira virtualno okruženje, instaliraju ovisnosti i preuzimaju težine modela (`MDV6-yolov10-c.pt`).
 
 ### Docker
 
@@ -42,14 +39,8 @@ Pri prvom pokretanju automatski se kreira virtualno okruženje i instaliraju ovi
 # Build Docker image
 just docker-build
 
-# World-only scan u Dockeru (default)
-just docker-world
-
-# Puni scan u Dockeru
+# Scan SD kartice u Dockeru
 just docker-scan
-
-# Brzi scan u Dockeru
-just docker-fast
 ```
 
 ## Mountanje SD kartice u Docker
@@ -116,36 +107,28 @@ docker compose run --rm -v "/Volumes/NOVA KARTICA:/sdcard:ro" scanner
 
 ## Kako radi
 
-### Dva moda rada
+### Model
 
-| Mod | Lokalno | Docker | Modeli | Detekcija |
-|-----|---------|--------|--------|-----------|
-| World | `just` / `just world` | `just docker-world` | Samo YOLO-World | Traktor, pickup, divljač |
-| Puni | `just scan` | `just docker-scan` | YOLOv8s + YOLO-World | Traktor, pickup, divljač |
-| Brzi | `just fast` | `just docker-fast` | Samo YOLOv8s | Standardne klase |
+Koristi se jedan model, **MegaDetector v6** (`MDV6-yolov10-c`), namijenjen filtriranju praznih okidača nadzornih/lovnih kamera. Skeniranje je jednoprolazno - svaka slika i video se obrade jednom.
 
 ### Proces skeniranja
 
 1. Automatski detektira SD karticu (traži DCIM folder)
 2. Pita za naziv kamere (npr. front, stala, kapija)
-3. **Prolaz 1 (YOLOv8s):** skenira sve slike i videe za standardne objekte *(preskače se u world modu)*
-4. **Prolaz 2 (YOLO-World):** skenira preskočene fajlove (ili sve u world modu) za dodatne klase (traktor, pickup, divljač)
-5. Generira izvještaj i VLC playlistu
-6. Otvara VLC sa pozitivnim snimkama (lokalni mod)
-7. Pita za sljedeću karticu
+3. Skenira sve slike i videe MegaDetectorom v6
+4. Generira izvještaj i VLC playlistu
+5. Otvara VLC sa pozitivnim snimkama (lokalni mod)
+6. Pita za sljedeću karticu
 
 ### Detektirani objekti
 
-**Prolaz 1 (YOLOv8s):** osoba, auto, kamion, motocikl, bicikl, autobus, pas
-
-**Prolaz 2 (YOLO-World):** traktor, jelen, lisica, vatra, dim + sve iz prolaza 1
+Osoba i vozilo. MegaDetector razlikuje i klasu životinja, ali se trenutno zadržavaju samo osoba i vozilo.
 
 ### Optimizacije brzine
 
-- Slike: ~0.5s po slici
-- Video: uzorkuje 1 frame/sec, prestaje čim nađe nešto
-- Ako slika ima detekciju, preskače pripadajući video (jer su par)
-- YOLO-World radi samo na fajlovima koje prvi prolaz preskočio
+- Video: uzorkuje svaki 30. frame (`grab()` bez dekodiranja), batch inferenca
+- Objekt mora biti detektiran u barem 2 uzorkovana framea (eliminira vjetar/grane)
+- Ignoriraju se sitne detekcije (šum lišća/sjena)
 
 ## Rezultati
 
