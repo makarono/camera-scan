@@ -13,8 +13,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN uv venv .venv && uv pip install -r requirements.txt
 
-# pre-download models
-RUN .venv/bin/python -c "from ultralytics import YOLO; YOLO('yolov8s.pt'); YOLO('yolov8s-worldv2.pt')"
+# pre-download MegaDetector v6 weights
+RUN .venv/bin/python -c "import urllib.request; urllib.request.urlretrieve('https://zenodo.org/records/15398270/files/MDV6-yolov10-e-1280.pt?download=1', 'MDV6-yolov10-e-1280.pt')"
 
 COPY filter_camera.py .
 
