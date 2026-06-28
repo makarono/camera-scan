@@ -4,6 +4,7 @@ Single-pass detection with MegaDetector v6 (MDV6-yolov10-c), a camera-trap model
 
 import argparse
 import subprocess
+import sys
 import time
 import urllib.request
 from datetime import datetime
@@ -287,4 +288,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nInterrupted. Bye!")
+        sys.exit(0)
