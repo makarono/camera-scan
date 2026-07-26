@@ -25,7 +25,7 @@ WANTED_CLASSES = {1: "person", 2: "vehicle"}
 CONFIDENCE_THRESHOLD = 0.25  # MegaDetector recommended range 0.2-0.3
 IMGSZ = 640  # must match the resolution the variant was trained at (-e-1280 wants 1280)
 VIDEO_SAMPLE_INTERVAL = 30
-BATCH_SIZE = 16  # frames per GPU inference batch
+BATCH_SIZE = 4  # frames per GPU inference batch; small enough that early-exit fires mid-clip
 MIN_VIDEO_FRAMES = 2  # object must appear in this many sampled frames (kills wind/branch false positives)
 MIN_BOX_AREA_RATIO = 0.004  # ignore tiny detections (foliage/shadow noise), fraction of frame area
 # Default to 'results' folder in the same directory as the script
@@ -100,40 +100,53 @@ def check_media(model, path_or_frame, classes, conf):
     return extract_detections(results, classes)
 
 
-def process_video(model, path, classes, conf):
-    """Sample frames from video and run batched detection. Early-exits per batch."""
+def iter_sampled_frames(path):
+    """Yield every Nth frame, decoding lazily so callers can stop early.
+
+    Advances with grab() (cheap, no color convert) and only decodes the frames
+    it yields. Decoding is ~2/3 of a video's cost, so abandoning this generator
+    on a confirmed hit saves more than skipping the remaining inference does.
+    """
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
-        return []
+        return
+    try:
+        idx = 0
+        while cap.grab():
+            if idx % VIDEO_SAMPLE_INTERVAL == 0:
+                ok, frame = cap.retrieve()
+                if not ok:
+                    break
+                yield frame
+            idx += 1
+    finally:
+        cap.release()
 
-    # Advance with grab() (cheap, no color convert) and only decode every Nth frame.
-    frames = []
-    idx = 0
-    while cap.grab():
-        if idx % VIDEO_SAMPLE_INTERVAL == 0:
-            ok, frame = cap.retrieve()
-            if not ok:
-                break
-            frames.append(frame)
-        idx += 1
-    cap.release()
-    if not frames:
-        return []
 
+def process_video(model, path, classes, conf):
+    """Detect in sampled frames, stopping as soon as a label is confirmed."""
     label_frames = {}  # base label -> number of sampled frames it appeared in
     best_str = {}      # base label -> display string (last seen)
-    for start in range(0, len(frames), BATCH_SIZE):
-        batch = frames[start:start + BATCH_SIZE]
+
+    def run(batch):
         for results in model(batch, verbose=False, conf=conf, device=DEVICE, imgsz=IMGSZ, half=HALF):
             for d in extract_detections(results, classes):
                 base = d.split("(")[0]
                 label_frames[base] = label_frames.get(base, 0) + 1
                 best_str[base] = d
-        confirmed = [b for b, n in label_frames.items() if n >= MIN_VIDEO_FRAMES]
-        if confirmed:
-            return [best_str[b] for b in confirmed]
+        return [best_str[b] for b, n in label_frames.items() if n >= MIN_VIDEO_FRAMES]
 
-    return []
+    batch = []
+    for frame in iter_sampled_frames(path):
+        batch.append(frame)
+        if len(batch) < BATCH_SIZE:
+            continue
+        confirmed = run(batch)
+        batch = []
+        if confirmed:
+            return confirmed
+
+    return run(batch) if batch else []
 
 
 def get_paired_file(file_path):

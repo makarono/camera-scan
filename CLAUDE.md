@@ -9,8 +9,9 @@ script, MegaDetector v6 via ultralytics.
 - **Planning** — use `superpowers:writing-plans` before multi-step work.
   Use `superpowers:brainstorming` when requirements or design are unclear.
 - **TDD** — use `superpowers:test-driven-development` before writing
-  implementation code. This project has no test suite; see Verification below
-  for how changes are proven instead.
+  implementation code. Detection logic is covered by `test_process_video.py`
+  (stub model, no weights or GPU needed). A new check must be shown to fail
+  against the previous implementation, or it proves nothing.
 - **Debugging** — use `superpowers:systematic-debugging` for any bug or
   unexpected detection result. Do not guess at model behaviour, measure it.
 - **Verification** — use `superpowers:verification-before-completion` before
@@ -18,7 +19,12 @@ script, MegaDetector v6 via ultralytics.
 
 ## Verification
 
-There is no test suite. Prove changes by running the real code path:
+```bash
+# Detection logic, fast, no weights needed
+.venv/bin/python test_process_video.py
+```
+
+Then prove the whole path still runs:
 
 ```bash
 # End-to-end on a synthetic card (no SD card needed)
@@ -47,8 +53,11 @@ parameter counts or published benchmarks. Time `model(frame, ...)` directly.
 - `HALF` (fp16) is enabled on `mps`/`cuda` only. It slows down CPU inference.
 - MegaDetector classes are `{0: animal, 1: person, 2: vehicle}`. Only person and
   vehicle are kept.
-- Video decode is a significant share of scan wall-clock, not just inference.
-  Optimising the model alone has a ceiling.
+- Video decode is ~2/3 of a clip's cost, inference ~1/3. Optimising the model
+  alone has a ceiling; `process_video` streams frames so a confirmed hit stops
+  decoding the rest. Files with no detection must still be scanned in full.
+- Seeking with `CAP_PROP_POS_FRAMES` instead of walking every frame halves
+  decode on MJPG, but is slower on inter-frame codecs. Unmeasured on real cards.
 - Weights (`*.pt`), `.venv/` and `results/` are gitignored.
 
 ## Conventions

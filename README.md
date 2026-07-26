@@ -147,6 +147,7 @@ Osoba i vozilo. MegaDetector razlikuje i klasu životinja, ali se trenutno zadr�
 ### Optimizacije brzine
 
 - Video: uzorkuje svaki 30. frame (`grab()` bez dekodiranja), batch inferenca
+- Kadrovi se dekodiraju lijeno - čim je detekcija potvrđena, ostatak videa se ne dekodira (~3x brže na pozitivnim snimkama)
 - Objekt mora biti detektiran u barem 2 uzorkovana framea (eliminira vjetar/grane)
 - Ignoriraju se sitne detekcije (šum lišća/sjena)
 - fp16 inferenca na GPU (`mps`/`cuda`), automatski isključena na CPU-u gdje bi usporila
