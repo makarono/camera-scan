@@ -48,6 +48,19 @@ parameter counts or published benchmarks. Time `model(frame, ...)` directly.
 - `IMGSZ` must match the resolution the chosen variant was trained at. Raising
   it does not improve detection, it only costs time. `MDV6-yolov10-c` and
   `MDV6-yolov10-e` are 640; `MDV6-yolov10-e-1280` is 1280.
+- **`MDV6-yolov10-e` is the default, not `-c`.** Measured over the same 242
+  files at imgsz 640: `-c` flagged 105, `-e` 89, and the difference is `-c`'s
+  false positives. Of 8 sampled files that only `-c` flagged, 7 hold no person
+  (the chained fence post with orange tape, up to 72%); of 3 that only `-e`
+  flagged, 2 are real and `-c` missed them entirely (a person in night IR, a
+  tractor behind branches). Cost: 56 vs 7 ms/frame inference, but decode
+  dominates, so the full scan went 7.0 -> 9.9 min.
+- **The branch beats `main` on detection, audited in full.** Same 242 files,
+  `main` (7fbc11e) flagged 90, the branch 89, 80 shared. Every one of the 19
+  disagreements was inspected: all 10 that only `main` flags are the taped
+  fence post with nobody there (up to 73%), while 7 of the 9 the branch adds
+  are real and `main` missed them outright - a person at 97% and 96%, a tractor
+  at 96%. The branch adds 2 new false positives, both under 45%.
 - Model weights come from Zenodo record 15398270. `--model <variant>` downloads
   on demand; a bad name fails with a clean 404 and writes nothing.
 - `HALF` (fp16) is enabled on `mps`/`cuda` only. It slows down CPU inference.
@@ -60,6 +73,12 @@ parameter counts or published benchmarks. Time `model(frame, ...)` directly.
   (328 real frames over 60s), and the `movi` chunk declares size 0. Sample by
   `CAP_PROP_POS_MSEC`, never by frame index, or coverage silently collapses to
   one sample every 5.5s. Measured: 2 of 20 clips with people were missed.
+- **Seeking is not a shortcut.** These AVIs carry no usable index, so every
+  `cap.set(CAP_PROP_POS_MSEC/POS_FRAMES, ...)` makes ffmpeg re-walk the file.
+  Measured on three real clips, warm cache, alternating order: 3.3x slower than
+  the current grab-walk (5.0-7.8 s vs 1.5-2.3 s per clip), and it lands wrong -
+  asking for 1000 ms returns 4367 ms, so the clip's first 4.4 s is never
+  sampled. Do not retry this.
 - AVFoundation is not a fix for the above. It pads to the declared 30 fps, so
   83% of the frames it returns are duplicates of the previous one. The ffmpeg
   backend returns the real frames.

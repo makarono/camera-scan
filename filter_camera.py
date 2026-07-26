@@ -16,7 +16,7 @@ import cv2
 DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
 
 MODEL_ZOO = "https://zenodo.org/records/15398270/files"
-MODEL_VARIANT = "MDV6-yolov10-c"  # override with --model; see Zenodo record 15398270 for the zoo
+MODEL_VARIANT = "MDV6-yolov10-e"  # -c is 8x cheaper per frame but calls the taped fence post a person
 HALF = DEVICE != "cpu"  # fp16 is a speedup on mps/cuda, a slowdown on cpu
 
 # MegaDetector v6 classes are {0: animal, 1: person, 2: vehicle}; keep only person + vehicle.
