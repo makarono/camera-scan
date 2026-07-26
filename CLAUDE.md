@@ -56,8 +56,17 @@ parameter counts or published benchmarks. Time `model(frame, ...)` directly.
 - Video decode is ~2/3 of a clip's cost, inference ~1/3. Optimising the model
   alone has a ceiling; `process_video` streams frames so a confirmed hit stops
   decoding the rest. Files with no detection must still be scanned in full.
-- Seeking with `CAP_PROP_POS_FRAMES` instead of walking every frame halves
-  decode on MJPG, but is slower on inter-frame codecs. Unmeasured on real cards.
+- **Camera metadata lies.** The AVIs declare 30 fps but contain ~5.5 fps
+  (328 real frames over 60s), and the `movi` chunk declares size 0. Sample by
+  `CAP_PROP_POS_MSEC`, never by frame index, or coverage silently collapses to
+  one sample every 5.5s. Measured: 2 of 20 clips with people were missed.
+- AVFoundation is not a fix for the above. It pads to the declared 30 fps, so
+  83% of the frames it returns are duplicates of the previous one. The ffmpeg
+  backend returns the real frames.
+- Real clips are 3840x2160, ~60s, MJPG, ~49 MB each. Benchmark against these,
+  not against synthetic 1080p clips, or the numbers will be optimistic.
+- macOS moves files deleted from an SD card to `.Trashes/501` on the card
+  itself. Check there before reaching for recovery tools.
 - Weights (`*.pt`), `.venv/` and `results/` are gitignored.
 
 ## Conventions

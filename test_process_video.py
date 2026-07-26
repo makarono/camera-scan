@@ -12,7 +12,9 @@ import numpy as np
 
 import filter_camera as fc
 
-TOTAL_FRAMES = 300  # 10s @ 30fps -> 10 sampled frames at VIDEO_SAMPLE_INTERVAL=30
+CLIP_SECONDS = 10
+FAST_FPS = 30  # a well-behaved clip
+SLOW_FPS = 5   # what the trail cameras actually write while claiming 30
 
 
 class Box:
@@ -37,10 +39,10 @@ class StubModel:
         return [Results(self.boxes_per_frame) for _ in batch]
 
 
-def make_video(path):
-    w = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 30, (1920, 1080))
+def make_video(path, fps):
+    w = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), fps, (1920, 1080))
     frame = np.zeros((1080, 1920, 3), dtype="uint8")
-    for _ in range(TOTAL_FRAMES):
+    for _ in range(fps * CLIP_SECONDS):
         w.write(frame)
     w.release()
 
@@ -48,10 +50,19 @@ def make_video(path):
 def main():
     tmp = Path(tempfile.mkdtemp())
     video = tmp / "IMAG0001.AVI"
-    make_video(video)
+    make_video(video, FAST_FPS)
 
+    expected = CLIP_SECONDS / fc.VIDEO_SAMPLE_SECONDS
     sampled = sum(1 for _ in fc.iter_sampled_frames(video))
-    assert sampled == TOTAL_FRAMES / fc.VIDEO_SAMPLE_INTERVAL, f"sampled {sampled} frames"
+    assert sampled == expected, f"sampled {sampled}, expected {expected}"
+
+    # Same duration at a low frame rate must still give one sample per second.
+    # Counting frames instead of time gave 2 samples here, missing anyone who
+    # crossed the frame in under ~5s.
+    slow = tmp / "IMAG0003.AVI"
+    make_video(slow, SLOW_FPS)
+    slow_sampled = sum(1 for _ in fc.iter_sampled_frames(slow))
+    assert slow_sampled == expected, f"low-fps clip sampled {slow_sampled}, expected {expected}"
 
     # A person in every frame: confirmed within the first batch, rest never decoded.
     model = StubModel([Box(1, 0.9)])

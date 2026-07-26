@@ -24,7 +24,9 @@ WANTED_CLASSES = {1: "person", 2: "vehicle"}
 
 CONFIDENCE_THRESHOLD = 0.25  # MegaDetector recommended range 0.2-0.3
 IMGSZ = 640  # must match the resolution the variant was trained at (-e-1280 wants 1280)
-VIDEO_SAMPLE_INTERVAL = 30
+# Sample by time, not by frame count: these cameras declare 30 fps in the AVI
+# header but write ~5.5, so "every 30th frame" lands one sample every 5.5s.
+VIDEO_SAMPLE_SECONDS = 1.0
 BATCH_SIZE = 4  # frames per GPU inference batch; small enough that early-exit fires mid-clip
 MIN_VIDEO_FRAMES = 2  # object must appear in this many sampled frames (kills wind/branch false positives)
 MIN_BOX_AREA_RATIO = 0.004  # ignore tiny detections (foliage/shadow noise), fraction of frame area
@@ -101,7 +103,7 @@ def check_media(model, path_or_frame, classes, conf):
 
 
 def iter_sampled_frames(path):
-    """Yield every Nth frame, decoding lazily so callers can stop early.
+    """Yield one frame per VIDEO_SAMPLE_SECONDS, decoding lazily.
 
     Advances with grab() (cheap, no color convert) and only decodes the frames
     it yields. Decoding is ~2/3 of a video's cost, so abandoning this generator
@@ -111,12 +113,18 @@ def iter_sampled_frames(path):
     if not cap.isOpened():
         return
     try:
-        idx = 0
+        next_at, idx = 0.0, 0
         while cap.grab():
-            if idx % VIDEO_SAMPLE_INTERVAL == 0:
+            pos = cap.get(cv2.CAP_PROP_POS_MSEC)
+            if pos <= 0 and idx > 0:
+                # No usable timestamps; fall back to the declared frame rate
+                # rather than silently sampling a single frame.
+                pos = idx * 1000.0 / (cap.get(cv2.CAP_PROP_FPS) or 30.0)
+            if pos >= next_at:
                 ok, frame = cap.retrieve()
                 if not ok:
                     break
+                next_at = pos + VIDEO_SAMPLE_SECONDS * 1000
                 yield frame
             idx += 1
     finally:
