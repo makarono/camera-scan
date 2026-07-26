@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Filter trail/surveillance camera files - keep only those with people or vehicles.
-Single-pass detection with MegaDetector v6 (MDV6-yolov10-c), a camera-trap model."""
+Single-pass detection with MegaDetector v6, a camera-trap model."""
 
 import argparse
 import subprocess
@@ -15,14 +15,15 @@ import cv2
 
 DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
 
-MODEL_URL = "https://zenodo.org/records/15398270/files/MDV6-yolov10-c.pt?download=1"
-MODEL_WEIGHTS = Path(__file__).parent / "MDV6-yolov10-c.pt"
+MODEL_ZOO = "https://zenodo.org/records/15398270/files"
+MODEL_VARIANT = "MDV6-yolov10-c"  # override with --model; see Zenodo record 15398270 for the zoo
+HALF = DEVICE != "cpu"  # fp16 is a speedup on mps/cuda, a slowdown on cpu
 
 # MegaDetector v6 classes are {0: animal, 1: person, 2: vehicle}; keep only person + vehicle.
 WANTED_CLASSES = {1: "person", 2: "vehicle"}
 
 CONFIDENCE_THRESHOLD = 0.25  # MegaDetector recommended range 0.2-0.3
-IMGSZ = 1280  # MegaDetector v6 inference resolution
+IMGSZ = 640  # must match the resolution the variant was trained at (-e-1280 wants 1280)
 VIDEO_SAMPLE_INTERVAL = 30
 BATCH_SIZE = 16  # frames per GPU inference batch
 MIN_VIDEO_FRAMES = 2  # object must appear in this many sampled frames (kills wind/branch false positives)
@@ -31,12 +32,13 @@ MIN_BOX_AREA_RATIO = 0.004  # ignore tiny detections (foliage/shadow noise), fra
 RESULTS_DIR = Path(__file__).parent / "results"
 
 
-def load_model():
+def load_model(variant=MODEL_VARIANT):
     """Download MegaDetector v6 weights if missing, then load via ultralytics."""
-    if not MODEL_WEIGHTS.exists():
-        print(f"Downloading MegaDetector weights -> {MODEL_WEIGHTS.name} ...")
-        urllib.request.urlretrieve(MODEL_URL, MODEL_WEIGHTS)
-    return YOLO(str(MODEL_WEIGHTS))
+    weights = Path(__file__).parent / f"{variant}.pt"
+    if not weights.exists():
+        print(f"Downloading MegaDetector weights -> {weights.name} ...")
+        urllib.request.urlretrieve(f"{MODEL_ZOO}/{variant}.pt?download=1", weights)
+    return YOLO(str(weights))
 
 
 def find_sd_card():
@@ -94,7 +96,7 @@ def extract_detections(results, classes):
 
 def check_media(model, path_or_frame, classes, conf):
     """Run detection on an image path or a video frame."""
-    results = model(path_or_frame, verbose=False, conf=conf, device=DEVICE, imgsz=IMGSZ)[0]
+    results = model(path_or_frame, verbose=False, conf=conf, device=DEVICE, imgsz=IMGSZ, half=HALF)[0]
     return extract_detections(results, classes)
 
 
@@ -122,7 +124,7 @@ def process_video(model, path, classes, conf):
     best_str = {}      # base label -> display string (last seen)
     for start in range(0, len(frames), BATCH_SIZE):
         batch = frames[start:start + BATCH_SIZE]
-        for results in model(batch, verbose=False, conf=conf, device=DEVICE, imgsz=IMGSZ):
+        for results in model(batch, verbose=False, conf=conf, device=DEVICE, imgsz=IMGSZ, half=HALF):
             for d in extract_detections(results, classes):
                 base = d.split("(")[0]
                 label_frames[base] = label_frames.get(base, 0) + 1
@@ -162,6 +164,7 @@ def scan_card(model, src, out_dir, no_vlc=False):
 
     print(f"Found {len(images)} images, {len(videos)} videos\n")
 
+    started = time.monotonic()
     results_log = {}  # filename -> detection_string
     all_files = images + videos
 
@@ -211,12 +214,16 @@ def scan_card(model, src, out_dir, no_vlc=False):
     playlist_files.sort(key=lambda x: x.name)
 
     # Write report
+    elapsed = time.monotonic() - started
     report = out_dir / "detected.txt"
     with open(report, "w") as f:
         f.write(f"Detected files: {len(results_log)}\n")
         f.write(f"Source: {src}\n")
         f.write(f"Scanned: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        f.write("Models: MegaDetector v6 (MDV6-yolov10-c)\n\n")
+        f.write(f"Models: MegaDetector v6 ({MODEL_VARIANT})\n")
+        f.write(f"Settings: imgsz={IMGSZ} half={HALF} device={DEVICE}\n")
+        f.write(f"Duration: {elapsed / 60:.1f} min for {len(all_files)} files "
+                f"({elapsed / max(len(all_files), 1):.2f} s/file)\n\n")
         for name, det in sorted(results_log.items()):
             f.write(f"{name}  ->  {det}\n")
 
@@ -230,7 +237,7 @@ def scan_card(model, src, out_dir, no_vlc=False):
 
     det_images = sum(1 for n in results_log if Path(n).suffix.upper() in (".JPG", ".JPEG", ".PNG"))
     det_videos = len(results_log) - det_images
-    print(f"\nDone! Detected {det_images} images + {det_videos} videos = {len(results_log)} total -> {report}")
+    print(f"\nDone in {elapsed / 60:.1f} min! Detected {det_images} images + {det_videos} videos = {len(results_log)} total -> {report}")
     print(f"Playlist: {playlist} ({len(playlist_files)} files)")
 
     if playlist_files and not no_vlc:
@@ -243,14 +250,19 @@ def scan_card(model, src, out_dir, no_vlc=False):
 
 
 def main():
+    global MODEL_VARIANT, IMGSZ
+
     parser = argparse.ArgumentParser(description="Camera SD card scanner")
     parser.add_argument("--no-vlc", action="store_true", help="Skip opening VLC (for Docker)")
+    parser.add_argument("--model", default=MODEL_VARIANT, help=f"MegaDetector v6 variant (default: {MODEL_VARIANT})")
+    parser.add_argument("--imgsz", type=int, default=IMGSZ, help=f"Inference resolution (default: {IMGSZ})")
     args = parser.parse_args()
+    MODEL_VARIANT, IMGSZ = args.model, args.imgsz
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("Loading MegaDetector v6...")
-    model = load_model()
+    print(f"Loading MegaDetector v6 ({MODEL_VARIANT}, imgsz={IMGSZ}, half={HALF}, device={DEVICE})...")
+    model = load_model(MODEL_VARIANT)
     print("Model ready\n")
 
     while True:

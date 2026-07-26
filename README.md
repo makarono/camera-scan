@@ -31,6 +31,16 @@ just setup
 just clean
 ```
 
+Zamjena modela ili rezolucije bez uređivanja koda:
+
+```bash
+# Veći, točniji model (težine se skidaju automatski)
+uv run filter_camera.py --model MDV6-yolov10-e
+
+# Varijanta trenirana na 1280px
+uv run filter_camera.py --model MDV6-yolov10-e-1280 --imgsz 1280
+```
+
 Pri prvom pokretanju automatski se kreira virtualno okruženje, instaliraju ovisnosti i preuzimaju težine modela (`MDV6-yolov10-c.pt`).
 
 ### Docker
@@ -111,6 +121,16 @@ docker compose run --rm -v "/Volumes/NOVA KARTICA:/sdcard:ro" scanner
 
 Koristi se jedan model, **MegaDetector v6** (`MDV6-yolov10-c`), namijenjen filtriranju praznih okidača nadzornih/lovnih kamera. Skeniranje je jednoprolazno - svaka slika i video se obrade jednom.
 
+Sve varijante dolaze s [Zenodo recorda 15398270](https://zenodo.org/records/15398270) i biraju se preko `--model`. Izmjereno na Apple Silicon (MPS, fp16, kadar 1920x1080):
+
+| Varijanta | `--imgsz` | ms/kadar | Recall |
+|---|---|---|---|
+| `MDV6-yolov10-c` (default) | 640 | ~15 | 76.8% |
+| `MDV6-yolov10-e` | 640 | ~63 | 82.8% |
+| `MDV6-yolov10-e-1280` | 1280 | ~208 | 82.8% |
+
+`--imgsz` mora odgovarati rezoluciji na kojoj je varijanta trenirana - veći broj ne daje bolju detekciju, samo sporije skeniranje.
+
 ### Proces skeniranja
 
 1. Automatski detektira SD karticu (traži DCIM folder)
@@ -129,6 +149,9 @@ Osoba i vozilo. MegaDetector razlikuje i klasu životinja, ali se trenutno zadr�
 - Video: uzorkuje svaki 30. frame (`grab()` bez dekodiranja), batch inferenca
 - Objekt mora biti detektiran u barem 2 uzorkovana framea (eliminira vjetar/grane)
 - Ignoriraju se sitne detekcije (šum lišća/sjena)
+- fp16 inferenca na GPU (`mps`/`cuda`), automatski isključena na CPU-u gdje bi usporila
+
+`detected.txt` bilježi korišteni model, postavke i trajanje skeniranja - za usporedbu varijanti na istoj kartici.
 
 ## Rezultati
 
