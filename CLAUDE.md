@@ -67,6 +67,11 @@ parameter counts or published benchmarks. Time `model(frame, ...)` directly.
   not against synthetic 1080p clips, or the numbers will be optimistic.
 - macOS moves files deleted from an SD card to `.Trashes/501` on the card
   itself. Check there before reaching for recovery tools.
+- The cameras restart numbering at `IMAG0001` after a card is cleared, so the
+  same filename means different recordings in different sessions. Never diff two
+  `detected.txt` reports by filename unless both ran over the same input; to
+  compare code versions, run both over one identical folder. `detected.txt` also
+  lists only positives, so a missing name never means "scanned and rejected".
 - Weights (`*.pt`), `.venv/` and `results/` are gitignored.
 
 ## Conventions
